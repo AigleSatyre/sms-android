@@ -41,7 +41,8 @@ jobs:
         run: |
           export SMS_ANDROID_KEYSTORE="$RUNNER_TEMP/release.keystore"
           keytool -genkey -v -keystore "$SMS_ANDROID_KEYSTORE" -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
-          sed -i 's/git status --porcelain/false/g; /not the previews/d; /rm -f "$apk"/d' release.sh
+          export SMS_ANDROID_CERT_SHA256=$(keytool -list -v -keystore "$SMS_ANDROID_KEYSTORE" -alias androiddebugkey -storepass android | sed -n 's/.*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f')
+          git commit -am "temp" || true
           ./release.sh --max-workers=4
           rm -f "$SMS_ANDROID_KEYSTORE"
       - name: Upload APK
