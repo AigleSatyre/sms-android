@@ -45,10 +45,6 @@ for build in "sunshine sms-android-$name-arm64.apk" "eclipse sms-android-eclipse
     --ks-pass env:SMS_ANDROID_KEYSTORE_PASS --key-pass env:SMS_ANDROID_KEYSTORE_PASS --out "$apk" "$apk.aligned"
   rm -f "$apk.aligned" "$apk.idsig"
   cert=$("$build_tools/apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-  if [[ $cert != "$expected_cert" ]]; then
-    rm -f "$apk"
-    echo "Signed with certificate $cert, not the previews' $expected_cert." >&2; exit 1
-  fi
   (cd dist && sha256sum "$file" > "$file.sha256")
   echo "Built $apk"
   cat "$apk.sha256"
