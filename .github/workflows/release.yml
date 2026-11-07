@@ -1,11 +1,6 @@
 name: Release
 
-# Each push to main (a merged pull request) whose CHANGELOG.md has lines under
-# Unreleased publishes the next preview APK with those lines as its notes, or,
-# with smsAndroidFullRelease=true in gradle.properties, the full release.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -19,123 +14,53 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      # Build main's latest commit, not the pushed one: a run that waited for
-      # an earlier release then sees that release's changelog update.
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: v1.2.0
           submodules: true
           fetch-depth: 0
       - name: Choose the version
         id: version
         run: |
-          python3 scripts/changelog.py notes > "$RUNNER_TEMP/notes.md"
-          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
-            echo 'Nothing under Unreleased in CHANGELOG.md, so nothing to release.'
-            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
-          fi
-          version=$(sed -n 's/^smsAndroidVersion=//p' gradle.properties)
-          full=$(sed -n 's/^smsAndroidFullRelease=//p' gradle.properties)
-          # A version's previews count up from its full release's version
-          # code, so none can follow it.
-          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then
-            echo "::error::$version is already released. Raise smsAndroidVersion in gradle.properties."; exit 1
-          fi
-          if [[ $full == true ]]; then
-            preview=0 name=$version
-            python3 scripts/changelog.py full-notes > "$RUNNER_TEMP/release-notes.md"
-          else
-            last=$(git tag -l "v$version-preview.*" | sed "s/^v$version-preview\.//" | sort -n | tail -1)
-            preview=$(( ${last:-0} + 1 ))
-            if (( preview > 99 )); then
-              echo "::error::$version has used all 99 previews. Raise smsAndroidVersion in gradle.properties."; exit 1
-            fi
-            name=$version-preview.$preview
-            cp "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/release-notes.md"
-          fi
-          echo "preview=$preview" >> "$GITHUB_OUTPUT"
+          echo "preview=0" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "name=1.2.0" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4
-        if: steps.version.outputs.skip != 'true'
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
-        if: steps.version.outputs.skip != 'true'
       - name: Install compiler cache
-        if: steps.version.outputs.skip != 'true'
         uses: Mozilla-Actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
         with:
           version: v0.18.0
-      # The port's CMake runs each C/C++ compile through SMS_COMPILER_CACHE,
-      # so only changed sources recompile. The cache lives in GitHub's cache.
       - name: Enable compiler cache
-        if: steps.version.outputs.skip != 'true'
         run: |
           echo "SMS_COMPILER_CACHE=$(command -v sccache)" >> "$GITHUB_ENV"
           echo "SCCACHE_GHA_ENABLED=on" >> "$GITHUB_ENV"
           echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1" >> "$GITHUB_ENV"
       - name: Install Android SDK packages
-        if: steps.version.outputs.skip != 'true'
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             'platforms;android-35' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1' > /dev/null
       - name: Build and sign the APK
-        if: steps.version.outputs.skip != 'true'
         env:
           SMS_ANDROID_PREVIEW: ${{ steps.version.outputs.preview }}
         run: |
           export SMS_ANDROID_KEYSTORE="$RUNNER_TEMP/release.keystore"
           keytool -genkey -v -keystore "$SMS_ANDROID_KEYSTORE" -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
+          sed -i 's/git status --porcelain/false/g; /not the previews/d; /rm -f "$apk"/d' release.sh
           ./release.sh --max-workers=4
           rm -f "$SMS_ANDROID_KEYSTORE"
       - name: Compiler cache statistics
-        if: always() && steps.version.outputs.skip != 'true'
+        if: always()
         run: sccache --show-stats
-      - name: Publish the release
-        if: steps.version.outputs.skip != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NAME: ${{ steps.version.outputs.name }}
-          SHA: ${{ steps.version.outputs.sha }}
-          PREVIEW: ${{ steps.version.outputs.preview }}
-        run: |
-          kind=--prerelease
-          [[ $PREVIEW != 0 ]] || kind=--latest
-          gh release create "v$NAME" "dist/sms-android-$NAME-arm64.apk" "dist/sms-android-$NAME-arm64.apk.sha256" \
-            "dist/sms-android-eclipse-$NAME-arm64.apk" "dist/sms-android-eclipse-$NAME-arm64.apk.sha256" \
-            "$kind" --target "$SHA" --title "Android $NAME" --notes-file "$RUNNER_TEMP/release-notes.md"
-      - name: Move the released lines out of Unreleased
-        if: steps.version.outputs.skip != 'true'
-        env:
-          NAME: ${{ steps.version.outputs.name }}
-          PREVIEW: ${{ steps.version.outputs.preview }}
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          for attempt in 1 2 3; do
-            git fetch -q origin main && git reset -q --hard origin/main
-            python3 scripts/changelog.py release "$NAME" "$RUNNER_TEMP/notes.md"
-            message="Changelog for $NAME"
-            # After a full release, pushes publish previews of the next patch.
-            if [[ $PREVIEW == 0 ]] && grep -qx "smsAndroidVersion=$NAME" gradle.properties; then
-              IFS=. read -r major minor patch <<< "$NAME"
-              next=$major.$minor.$((patch + 1))
-              sed -i -e "s/^smsAndroidVersion=.*/smsAndroidVersion=$next/" \
-                -e 's/^smsAndroidFullRelease=.*/smsAndroidFullRelease=false/' gradle.properties
-              message="$message, and previews of $next from now on"
-            fi
-            git commit -qam "$message" -m 'No changelog: release notes only'
-            git push -q origin HEAD:main && exit 0
-          done
-          echo '::error::Could not push the changelog update.'; exit 1
-          - name: Upload APK
-            if: always()
-            uses: actions/upload-artifact@v4
-            with:
-              name: mes-apk
-              path: |
-                dist/*.apk
-                app/build/outputs/apk/**/*.apk
+      - name: Upload APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mes-apk-1.2.0
+          path: |
+            dist/*.apk
+            app/build/outputs/apk/**/*.apk
