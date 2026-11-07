@@ -131,3 +131,11 @@ jobs:
             git push -q origin HEAD:main && exit 0
           done
           echo '::error::Could not push the changelog update.'; exit 1
+          - name: Upload APK
+            if: always()
+            uses: actions/upload-artifact@v4
+            with:
+              name: mes-apk
+              path: |
+                dist/*.apk
+                app/build/outputs/apk/**/*.apk
