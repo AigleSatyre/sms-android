@@ -5,7 +5,7 @@ What changed in each Android release and preview, newest first. Each push to
 with those lines as its notes, and moves them under its heading. See AGENTS.md.
 
 ## Unreleased
-
+- Build APK
 ## 1.2.1-preview.1
 
 - The update notice at the top of the launcher is now just a Get update button, which fits on every screen; before, it could push its own buttons off narrower ones.
