@@ -3,10 +3,6 @@ name: Release
 on:
   workflow_dispatch:
 
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 permissions:
   contents: write
 
@@ -16,22 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: chasem-dev/sms-android
           ref: v1.2.0
           submodules: true
           fetch-depth: 0
-      - name: Choose the version
-        id: version
-        run: |
-          echo "preview=0" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          echo "name=1.2.0" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
       - name: Install compiler cache
-        uses: Mozilla-Actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+        uses: Mozilla-Actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696
         with:
           version: v0.18.0
       - name: Enable compiler cache
@@ -46,16 +37,13 @@ jobs:
             'platforms;android-35' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1' > /dev/null
       - name: Build and sign the APK
         env:
-          SMS_ANDROID_PREVIEW: ${{ steps.version.outputs.preview }}
+          SMS_ANDROID_PREVIEW: "0"
         run: |
           export SMS_ANDROID_KEYSTORE="$RUNNER_TEMP/release.keystore"
           keytool -genkey -v -keystore "$SMS_ANDROID_KEYSTORE" -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Android Debug,O=Android,C=US"
           sed -i 's/git status --porcelain/false/g; /not the previews/d; /rm -f "$apk"/d' release.sh
           ./release.sh --max-workers=4
           rm -f "$SMS_ANDROID_KEYSTORE"
-      - name: Compiler cache statistics
-        if: always()
-        run: sccache --show-stats
       - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
